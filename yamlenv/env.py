@@ -1,6 +1,8 @@
 # pylint: disable=undefined-variable
 import os
 import re
+from munch import munchify
+import yaml
 
 try:
     from collections.abc import Mapping, Sequence, Set
@@ -33,39 +35,56 @@ def objwalk(obj, path=(), memo=None):
 
 
 class EnvVar(object):
-    __slots__ = ['name', 'default', 'string']
+    __slots__ = ['name', 'default', 'string', 'yaml_data']
 
     RE = re.compile(
         r'\$\{(?P<name>[^:-]+)(?:(?P<separator>:?-)(?P<default>.+))?\}')
 
-    def __init__(self, name, default, string):
+    def __init__(self, name, default, string, yaml_data):
         self.name = name
         self.default = default
         self.string = string
+        self.yaml_data = yaml_data
 
     @property
     def value(self):
-        value = os.environ.get(self.name)
-        if value:
-            return self.RE.sub(value, self.string)
-        if self.default:
-            return self.default
-        raise ValueError('Missing value and default for {}'.format(self.name))
 
+        # Try from environ
+        value = os.environ.get(self.name)
+        if not value:
+            value = str(eval(f'self.yaml_data.{self.name}'))
+        
+        # Recursion . WARNING: Can be infinite
+        if value:                
+            res2 = EnvVar.from_string(value, self.yaml_data)
+            if res2 is not None: 
+                value = str(res2.value)
+        
+        if not value and self.default: 
+            value = self.default
+        
+        if value: 
+            return self.RE.sub(value, self.string)
+        else:
+            raise ValueError('Missing value and default for {}'.format(self.name))
+        
+        
     @classmethod
-    def from_string(cls, s):
+    def from_string(cls, s, yaml_data):
         if not isinstance(s, six.string_types):
             return None
         data = cls.RE.search(s)
         if not data:
             return None
         data = data.groupdict()
-        return cls(data['name'], data['default'], s)
+        return cls(data['name'], data['default'], s, yaml_data)
 
 
 def interpolate(data):
+    datam = munchify(data)
     for path, obj in objwalk(data):
-        e = EnvVar.from_string(obj)
+        # print(' - ', obj, path)
+        e = EnvVar.from_string(obj, datam)
         if e is not None:
             x = data
             for k in path[:-1]:
