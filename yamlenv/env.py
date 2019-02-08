@@ -35,28 +35,32 @@ def objwalk(obj, path=(), memo=None):
 
 
 class EnvVar(object):
-    __slots__ = ['name', 'default', 'string', 'yaml_data']
+    __slots__ = ['name', 'default', 'string', 'yaml_data', 'additional_vars']
 
     RE = re.compile(
         r'\$\{(?P<name>[^:-]+)(?:(?P<separator>:?-)(?P<default>.+))?\}')
 
-    def __init__(self, name, default, string, yaml_data):
+    def __init__(self, name, default, string, yaml_data, additional_vars):
         self.name = name
         self.default = default
         self.string = string
         self.yaml_data = yaml_data
-
+        self.additional_vars = additional_vars
+        print ('==========',additional_vars)
     @property
     def value(self):
 
         # Try from environ
         value = os.environ.get(self.name)
-        if not value:
+        if not value and self.name in self.yaml_data:
             value = str(eval(f'self.yaml_data.{self.name}'))
         
+        if not value: 
+            value = self.additional_vars.get(self.name, None)
+            
         # Recursion . WARNING: Can be infinite
         if value:                
-            res2 = EnvVar.from_string(value, self.yaml_data)
+            res2 = EnvVar.from_string(value, self.yaml_data, self.additional_vars)
             if res2 is not None: 
                 value = str(res2.value)
         
@@ -70,21 +74,21 @@ class EnvVar(object):
         
         
     @classmethod
-    def from_string(cls, s, yaml_data):
+    def from_string(cls, s, yaml_data, additional_vars):
         if not isinstance(s, six.string_types):
             return None
         data = cls.RE.search(s)
         if not data:
             return None
         data = data.groupdict()
-        return cls(data['name'], data['default'], s, yaml_data)
+        return cls(data['name'], data['default'], s, yaml_data, additional_vars)
 
 
-def interpolate(data):
+def interpolate(data, additional_vars):
     datam = munchify(data)
     for path, obj in objwalk(data):
         # print(' - ', obj, path)
-        e = EnvVar.from_string(obj, datam)
+        e = EnvVar.from_string(obj, datam, additional_vars)
         if e is not None:
             x = data
             for k in path[:-1]:
